@@ -102,7 +102,7 @@ def process_posts_xml(xml_path, source_prefix, max_docs):
         if saved % 1000 == 0:
             print(f"  → Сохранено {saved} документов...")
         time.sleep(REQUEST_DELAY)
-    print(f"✅ Завершено: {saved} документов из {source_prefix}")
+    print(f"Завершено: {saved} документов из {source_prefix}")
     return saved
 
 
@@ -118,8 +118,8 @@ def main():
         xml_path = extract_posts_xml(archive_path, extract_dir)
         count = process_posts_xml(xml_path, alias, MAX_DOCS_PER_SOURCE)
         total_saved += count
-    print(f"\n🎉 Всего сохранено: {total_saved} документов")
-    print(f"📁 Корпус: {CORPUS_DIR.absolute()}")
+    print(f"\n Всего сохранено: {total_saved} документов")
+    print(f" Корпус: {CORPUS_DIR.absolute()}")
 
 
 if __name__ == "__main__":
