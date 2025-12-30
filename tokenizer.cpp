@@ -5,50 +5,68 @@
 #include <vector>
 #include <cctype>
 
-static char to_lower(char c) {
-    return (c >= 'A' && c <= 'Z') ? c + ('a' - 'A') : c;
+char convert_to_lowercase(char symbol) {
+    if (symbol >= 'A' && symbol <= 'Z') {
+        return symbol + 32; // разница между 'a' и 'A'
+    }
+    return symbol;
 }
 
-static bool is_alphanum(char c) {
-    return (c >= 'a' && c <= 'z') ||
-           (c >= 'A' && c <= 'Z') ||
-           (c >= '0' && c <= '9');
+bool is_alphanumeric(char symbol) {
+    return (symbol >= 'a' && symbol <= 'z') ||
+           (symbol >= 'A' && symbol <= 'Z') ||
+           (symbol >= '0' && symbol <= '9');
 }
 
-static std::vector<std::string> tokenize(const std::string& text) {
-    std::vector<std::string> tokens;
-    std::string token;
-    for (char c : text) {
-        if (is_alphanum(c)) {
-            token += to_lower(c);
+std::vector<std::string> extract_words(const std::string& input_text) {
+    std::vector<std::string> word_list;
+    std::string current_word;
+
+    for (char c : input_ext) {
+        if (is_alphanumeric(c)) {
+            current_word += convert_to_lowercase(c);
         } else {
-            if (token.size() >= 2) tokens.push_back(token);
-            token.clear();
+            if (current_word.length() >= 2) {
+                word_list.push_back(current_word);
+            }
+            current_word.clear();
         }
     }
-    if (token.size() >= 2) tokens.push_back(token);
-    return tokens;
+
+    if (current_word.length() >= 2) {
+        word_list.push_back(current_word);
+    }
+
+    return word_list;
 }
 
-static std::string read_file(const std::string& path) {
-    std::ifstream f(path, std::ios::binary);
-    if (!f) {
-        std::cerr << "Ошибка: не удалось открыть " << path << "\n";
+std::string load_text_from_file(const std::string& file_path) {
+    std::ifstream input_stream(file_path, std::ios::binary);
+    if (!input_stream.is_open()) {
+        std::cerr << "Ошибка: невозможно открыть файл '" << file_path << "'\n";
         return "";
     }
-    std::ostringstream buf;
-    buf << f.rdbuf();
-    return buf.str();
+
+    std::ostringstream content_buffer;
+    content_buffer << input_stream.rdbuf();
+    return content_buffer.str();
 }
 
-int main(int argc, char* argv[]) {
-    if (argc != 2) {
-        std::cerr << "Использование: " << argv[0] << " <файл.txt>\n";
+int main(int argument_count, char* argument_values[]) {
+    if (argument_count != 2) {
+        std::cerr << "Использование: " << argument_values[0] << " <путь_к_файлу.txt>\n";
         return 1;
     }
-    std::string content = read_file(argv[1]);
-    if (content.empty()) return 1;
-    auto tokens = tokenize(content);
-    for (const auto& t : tokens) std::cout << t << '\n';
+
+    std::string file_content = load_text_from_file(argument_values[1]);
+    if (file_content.empty()) {
+        return 1;
+    }
+
+    std::vector<std::string> words = extract_words(file_content);
+    for (const std::string& word : words) {
+        std::cout << word << '\n';
+    }
+
     return 0;
 }
