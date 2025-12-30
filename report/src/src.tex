@@ -1,0 +1,118 @@
+\section{Исходный код}
+Реализация состоит из двух частей: \textbf{сбор данных и веб-интерфейс (Python)} и \textbf{обработка/поиск (C++)}. Все компоненты разработаны с акцентом на производительность, простоту и минимальные зависимости. Система не использует STL за пределами \texttt{std::string} и \texttt{std::vector}, а также сторонние поисковые библиотеки.
+
+\subsection*{Сбор данных (\texttt{crawler.py})}
+Модуль загружает архивы \texttt{.7z} с сайта Archive.org, содержащие дампы сообществ Stack Exchange:
+\begin{itemize}
+\item \texttt{ai.stackexchange.com}
+\item \texttt{datascience.stackexchange.com}
+\end{itemize}
+После скачивания архив распаковывается с помощью библиотеки \texttt{py7zr}, извлекается файл \texttt{Posts.xml}. Затем парсер \texttt{xml.etree.ElementTree} проходит по всем записям типа \texttt{PostTypeId="1"} (вопросы), извлекая заголовок и тело сообщения.
+
+HTML-разметка очищается с помощью регулярных выражений:
+\[
+\texttt{re.sub(r"<[^>]+>", "", html)}
+\]
+Текст объединяется: \texttt{title + "\textbackslash n\textbackslash n" + body}, и проверяется на минимальную длину — не менее 100 слов. Каждый документ сохраняется в директорию \texttt{corpus/} как \texttt{<source>\_<id>.txt}, а метаданные — в JSON-файл с тем же именем, включая:
+\begin{itemize}
+\item URL статьи;
+\item Хеш содержимого (MD5);
+\item Время извлечения;
+\item Количество слов.
+\end{itemize}
+Для обеспечения идемпотентности повторная загрузка не перезаписывает существующие файлы. Между запросами соблюдается задержка 1 секунда.
+
+\subsection*{Токенизатор (\texttt{tokenizer.cpp})}
+Работает в два этапа:
+\begin{enumerate}
+\item Чтение всего файла в память через \texttt{std::ifstream} в двоичном режиме.
+\item Посимвольная обработка:
+\begin{itemize}
+\item Латинские буквы приводятся к нижнему регистру;
+\item Допустимыми символами считаются только \texttt{[a–z0–9]};
+\item Прочие символы являются разделителями.
+\end{itemize}
+\end{enumerate}
+Накопленное слово добавляется в список, если его длина ≥2. Результат — вектор нормализованных терминов, готовых к стеммингу и индексации.
+
+\subsection*{Стеммер (\texttt{PorterStemmer.h})}
+Реализован упрощённый алгоритм Портера на C++. Основные шаги:
+\begin{itemize}
+\item Удаление суффиксов: \texttt{s}, \texttt{ss}, \texttt{ies}, \texttt{ed}, \texttt{ing};
+\item Правила замены: \texttt{ational → ate}, \texttt{tional → tion}, \texttt{ization → ize};
+\item Удаление окончаний: \texttt{al}, \texttt{ance}, \texttt{ence}, \texttt{er}, \texttt{ic};
+\item Коррекция: \texttt{e} удаляется при определённых условиях;
+\item Удвоение согласных: например, \texttt{ll} после \texttt{e} может быть сокращено до \texttt{l}.
+\end{itemize}
+Функция \texttt{stem()} принимает строку, приводит её к нижнему регистру и последовательно применяет правила. Алгоритм работает за $O(k)$ для слова длины $k$.
+
+\subsection*{Построение индексов (\texttt{index.cpp})}
+Обрабатываются все файлы в директории \texttt{corpus/}. Для каждого документа:
+\begin{itemize}
+\item Извлекаются токены;
+\item Каждый токен стеммируется;
+\item Формируется обратный индекс: \texttt{term → [doc\_id]}.
+\end{itemize}
+Также строится прямой индекс: \texttt{doc\_id → title, url}, где URL формируется автоматически на основе имени файла.
+
+Индексы сериализуются в бинарные файлы:
+\begin{itemize}
+\item \texttt{inverted\_index.bin}: сначала количество терминов, затем для каждого:
+\begin{itemize}
+\item Длина строки (4 байта);
+\item Само слово;
+\item Количество документов (4 байта);
+\item Список ID документов (по 4 байта каждый).
+\end{itemize}
+\item \texttt{forward\_index.bin}: аналогично — число документов, затем для каждого:
+\begin{itemize}
+\item \texttt{doc\_id}, длина и текст заголовка, длина и URL.
+\end{itemize}
+\end{itemize}
+Перед сохранением обратный индекс сортируется по алфавиту. Это позволяет использовать бинарный поиск при выполнении запросов.
+
+\subsection*{Булев поиск (\texttt{search.cpp})}
+Поддерживается полный синтаксис:
+\begin{itemize}
+\item \texttt{car engine} → \texttt{car \&\& engine}
+\item \texttt{car || truck}
+\item \texttt{!bike}
+\item \texttt{(car || truck) \&\& engine}
+\end{itemize}
+Архитектура:
+\begin{enumerate}
+\item Загрузка индексов из бинарных файлов;
+\item Лексический анализ: входной запрос разбивается на токены (слова, \texttt{&&}, \texttt{||}, \texttt{!}, скобки);
+\item Синтаксический анализ методом рекурсивного спуска:
+\begin{itemize}
+\item \texttt{eval\_expr()} — обрабатывает OR;
+\item \texttt{eval\_term()} — AND;
+\item \texttt{eval\_factor()} — NOT и скобки.
+\end{itemize}
+\item Операции над списками:
+\begin{itemize}
+\item \texttt{AND}: слияние двух отсортированных списков за $O(|A|+|B|)$;
+\item \texttt{OR}: объединение с удалением дубликатов;
+\item \texttt{NOT}: дополнение до полного множества документов.
+\end{itemize}
+\end{enumerate}
+Поиск выполняется за доли миллисекунды даже на корпусе из 30\,000 документов.
+
+\subsection*{Веб-интерфейс (\texttt{web.py})}
+Для удобства используется веб-интерфейс на Flask. Он:
+\begin{itemize}
+\item Отображает форму ввода запроса;
+\item При поиске запускает внешнюю программу \texttt{./searcher "запрос"} через \texttt{subprocess.run()};
+\item Парсит вывод: каждая строка вида \texttt{title | url} преобразуется в ссылку;
+\item Поддерживает постраничную навигацию (по 50 результатов на страницу).
+\end{itemize}
+Интерфейс работает на \texttt{http://localhost:5000}, имеет чистый, отзывчивый дизайн и полностью автономен.
+
+Производительность:
+\begin{itemize}
+\item Время ответа: $\sim$1–5 мс;
+\item Поддержка сложных логических выражений;
+\item Масштабируемость: легко адаптируется под новые источники.
+\end{itemize}
+
+\pagebreak
