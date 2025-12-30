@@ -1,77 +1,155 @@
 from flask import Flask, request, render_template_string
 import subprocess
-import sys
 
-app = Flask(__name__)
+# Инициализация приложения
+web_app = Flask(__name__)
 
-HOME = """
+# HTML-шаблон интерфейса
+SEARCH_PAGE = '''
 <!DOCTYPE html>
-<html>
+<html lang="ru">
 <head>
-    <meta charset="utf-8">
-    <title>Поиск</title>
+    <meta charset="UTF-8">
+    <title>Поиск на Stack Exchange</title>
     <style>
-        body { font-family: sans-serif; margin: 20px; }
-        form { margin-bottom: 20px; }
-        input[type=text] { width: 60%; padding: 8px; }
-        input[type=submit] { padding: 8px 16px; }
-        .res { margin: 10px 0; }
-        .pager { margin-top: 15px; }
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background-color: #f9f9f9;
+        }
+        .container {
+            max-width: 800px;
+            margin: auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+        }
+        form {
+            margin-bottom: 20px;
+        }
+        input[type="text"] {
+            width: 65%;
+            padding: 8px;
+            font-size: 1em;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        input[type="submit"] {
+            padding: 8px 16px;
+            font-size: 1em;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        input[type="submit"]:hover {
+            background-color: #0056b3;
+        }
+        .result-item {
+            margin: 8px 0;
+        }
+        .pagination {
+            margin-top: 20px;
+        }
+        .pagination a {
+            margin: 0 8px;
+            text-decoration: none;
+            color: #007bff;
+        }
+        .pagination a:hover {
+            text-decoration: underline;
+        }
     </style>
 </head>
 <body>
-    <h1>Поиск по Stack Exchange</h1>
-    <form method="GET" action="/search">
-        <input type="text" name="q" value="{{ query|default('', true) }}" required>
-        <input type="submit" value="Найти">
-    </form>
-    {% if results %}
-        <h2>Результаты ({{ start+1 }}–{{ end }} из {{ total }})</h2>
-        {% for title, url in results %}
-            <div class="res"><a href="{{ url }}">{{ title }}</a></div>
-        {% endfor %}
-        <div class="pager">
-            {% if start > 0 %}<a href="?q={{ query|urlencode }}&offset={{ start-50 }}">← Назад</a> | {% endif %}
-            {% if end < total %}<a href="?q={{ query|urlencode }}&offset={{ end }}">Вперёд →</a>{% endif %}
-        </div>
-    {% elif query %}
-        <p>Ничего не найдено.</p>
-    {% endif %}
+    <div class="container">
+        <h1>Поиск по Stack Exchange</h1>
+        <form method="GET" action="/search">
+            <input type="text" name="q" value="{{ query or '' }}" placeholder="Введите поисковый запрос" required>
+            <input type="submit" value="Искать">
+        </form>
+
+        {% if results %}
+            <h2>Результаты: {{ start + 1 }}–{{ end }} из {{ total_count }}</h2>
+            {% for title, link in results %}
+                <div class="result-item">
+                    <a href="{{ link }}" target="_blank">{{ title }}</a>
+                </div>
+            {% endfor %}
+
+            <div class="pagination">
+                {% if has_prev %}
+                    <a href="?q={{ query|urlencode }}&offset={{ prev_offset }}">&laquo; Назад</a>
+                {% endif %}
+                {% if has_next %}
+                    <a href="?q={{ query|urlencode }}&offset={{ next_offset }}">Вперёд &raquo;</a>
+                {% endif %}
+            </div>
+
+        {% elif query %}
+            <p>По вашему запросу ничего не найдено.</p>
+        {% endif %}
+    </div>
 </body>
 </html>
-"""
+'''
 
-@app.route('/')
-def home():
-    return render_template_string(HOME)
+@web_app.route('/')
+def index():
+    return render_template_string(SEARCH_PAGE)
 
-@app.route('/search')
-def search():
-    query = request.args.get('q', '').strip()
-    offset = int(request.args.get('offset', 0))
-    if not query:
-        return render_template_string(HOME, query=query)
+@web_app.route('/search')
+def perform_search():
+    user_query = request.args.get('q', '').strip()
+    page_offset = int(request.args.get('offset', 0))
 
-    results = []
+    if not user_query:
+        return render_template_string(SEARCH_PAGE, query=user_query)
+
+    parsed_results = []
     try:
-        out = subprocess.run(["./searcher", query], capture_output=True, text=True, encoding='utf-8', check=True).stdout
-        for line in out.splitlines():
-            if " | " in line:
-                parts = line.split(" | ", 1)
+        # Запуск внешней утилиты searcher с передачей поискового запроса
+        process = subprocess.run(
+            ['./searcher', user_query],
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            check=True
+        )
+        output_lines = process.stdout.strip().split('\n')
+
+        for line in output_lines:
+            if ' | ' in line:
+                parts = line.split(' | ', 1)
                 if len(parts) == 2:
-                    results.append((parts[0], parts[1]))
-    except Exception:
+                    parsed_results.append((parts[0].strip(), parts[1].strip()))
+    except (subprocess.CalledProcessError, OSError, ValueError):
+        # При ошибке просто оставляем пустой список результатов
         pass
 
-    start = offset
-    end = min(start + 50, len(results))
-    paginated = results[start:end]
-    return render_template_string(HOME,
-                                 query=query,
-                                 results=paginated,
-                                 start=start,
-                                 end=end,
-                                 total=len(results))
+    total = len(parsed_results)
+    page_size = 50
+    start_idx = page_offset
+    end_idx = min(start_idx + page_size, total)
+    displayed_results = parsed_results[start_idx:end_idx]
+
+    return render_template_string(
+        SEARCH_PAGE,
+        query=user_query,
+        results=displayed_results,
+        start=start_idx,
+        end=end_idx,
+        total_count=total,
+        has_prev=(start_idx > 0),
+        prev_offset=max(0, start_idx - page_size),
+        has_next=(end_idx < total),
+        next_offset=end_idx
+    )
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    web_app.run(host='0.0.0.0', port=5000, debug=False)
